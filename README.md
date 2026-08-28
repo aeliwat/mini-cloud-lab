@@ -1,5 +1,12 @@
 # minicloud
 
+
+[![CI](https://github.com/aeliwat/mini-cloud-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/aeliwat/mini-cloud-lab/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/github/go-mod/go-version/aeliwat/mini-cloud-lab)](https://go.dev/)
+[![License](https://img.shields.io/github/license/aeliwat/mini-cloud-lab)](LICENSE)
+[![Go Reference](https://pkg.go.dev/badge/github.com/aeliwat/mini-cloud-lab.svg)](https://pkg.go.dev/github.com/aeliwat/mini-cloud-lab)
+
+
 A local cloud simulator written in **Go**.
 
 Provision virtual servers (web, database, load balancer), simulate traffic, and see what fails when capacity is exceeded — from the CLI or an animated UI.
