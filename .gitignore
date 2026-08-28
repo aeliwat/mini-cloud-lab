@@ -1,0 +1,7 @@
+/minicloud
+*.exe
+*.test
+.idea/
+.DS_Store
+state.json
+.minicloud/

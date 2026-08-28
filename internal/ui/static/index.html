@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>minicloud — topology simulator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="top">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div>
+        <h1>minicloud</h1>
+        <p class="tag">terminal · topology simulator</p>
+      </div>
+    </div>
+    <div class="top-meta">
+      <span id="tick-clock" class="mono tick-clock">t = idle</span>
+      <span id="state-path" class="mono muted">loading…</span>
+      <button type="button" id="btn-refresh" class="ghost">Refresh</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="stage-wrap">
+      <div class="stage-label">
+        <span>Architecture canvas</span>
+        <span class="hint">drag nodes to rearrange</span>
+      </div>
+      <div id="stage" class="stage" role="img" aria-label="Server topology">
+        <svg id="wires" class="wires" aria-hidden="true"></svg>
+        <div id="clients" class="clients node-block">
+          <div class="pulse-ring"></div>
+          <div class="node clients-node">
+            <span class="node-kicker">traffic</span>
+            <strong>Users</strong>
+            <span id="users-label" class="mono">idle</span>
+          </div>
+        </div>
+        <div id="nodes" class="nodes"></div>
+        <canvas id="particles" class="particles" aria-hidden="true"></canvas>
+        <div id="empty" class="empty hidden">
+          Pick a scenario on the right, or run<br />
+          <code>minicloud server add --type lb --ram 1G --disk 10G</code>
+        </div>
+      </div>
+    </section>
+
+    <aside class="panel">
+      <h2>Scenarios</h2>
+      <p class="panel-copy">One-click demos. Applies architecture + load settings.</p>
+      <div id="scenario-list" class="scenario-list"></div>
+
+      <h2 class="panel-gap">Load control</h2>
+      <p class="panel-copy">Live second-by-second simulation. LB path: users → lb → web.</p>
+
+      <label class="field">
+        <span>Virtual users</span>
+        <input id="input-users" type="number" min="0" step="1000" value="100000" />
+      </label>
+      <label class="field">
+        <span>Target RPS</span>
+        <input id="input-rps" type="number" min="1" step="100" value="2000" />
+      </label>
+      <label class="field">
+        <span>Duration</span>
+        <input id="input-duration" type="text" value="15s" />
+      </label>
+
+      <button type="button" id="btn-load" class="primary">
+        <span>Run live simulation</span>
+      </button>
+
+      <div id="live-strip" class="live-strip hidden">
+        <div class="live-row"><span>Second</span><strong id="live-second">—</strong></div>
+        <div class="live-row"><span>This sec OK</span><strong id="live-ok">0</strong></div>
+        <div class="live-row"><span>This sec FAIL</span><strong id="live-fail">0</strong></div>
+        <div class="live-row"><span>Cumulative OK</span><strong id="live-cum-ok">0</strong></div>
+      </div>
+
+      <div id="report" class="report hidden">
+        <h3>Last run</h3>
+        <dl id="report-stats"></dl>
+        <div id="report-bars" class="bars"></div>
+      </div>
+
+      <p id="error" class="error hidden"></p>
+    </aside>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
