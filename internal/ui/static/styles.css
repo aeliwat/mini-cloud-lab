@@ -301,6 +301,11 @@ html, body {
 
 .node .mono { font-size: 0.72rem; color: var(--ink-soft); }
 
+.db-link {
+  color: var(--db) !important;
+  font-size: 0.65rem !important;
+}
+
 .server-node {
   position: absolute;
   transform: translate(-50%, -50%);
@@ -477,13 +482,18 @@ html, body {
 }
 
 .server-node.overloaded {
-  background: #1a0808;
-  border-color: rgba(255, 92, 92, 0.75);
+  background: #2a0a0a;
+  border-color: rgba(255, 92, 92, 0.9);
   border-top-color: var(--coral) !important;
   box-shadow:
-    0 0 0 1px rgba(255, 92, 92, 0.45),
-    0 0 28px rgba(255, 92, 92, 0.32);
+    0 0 0 2px rgba(255, 92, 92, 0.55),
+    0 0 32px rgba(255, 92, 92, 0.45);
   animation: overloadPulse 1.1s ease-in-out infinite;
+}
+
+.server-node.web.overloaded {
+  border-top-color: var(--coral) !important;
+  background: linear-gradient(180deg, #3a1010 0%, #1a0808 100%);
 }
 
 .server-node.overloaded strong,
@@ -493,9 +503,15 @@ html, body {
 }
 
 .server-node.overloaded .cap-line::after {
-  content: " · dropping";
+  content: " · spillover";
   color: var(--coral);
   font-weight: 600;
+}
+
+.server-node.overloaded .load-badge.badge-red {
+  background: rgba(255, 92, 92, 0.25);
+  color: #ffb4b4;
+  border-color: rgba(255, 92, 92, 0.7);
 }
 
 .meter {

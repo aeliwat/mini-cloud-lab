@@ -15,6 +15,7 @@ const (
 
 	latencyLBMS  = 2.0
 	latencyWebMS = 12.0
+	latencyDBMS  = 5.0
 )
 
 // Config controls a load simulation run.
@@ -89,6 +90,7 @@ func Run(servers []models.Server, cfg Config) (*Result, error) {
 	}
 
 	fleet := cloneServers(servers)
+	resetHealth(fleet)
 	nSeconds := int(math.Round(cfg.Duration.Seconds()))
 	if nSeconds < 1 {
 		nSeconds = 1
@@ -144,11 +146,21 @@ func Run(servers []models.Server, cfg Config) (*Result, error) {
 			capacity[lb.ID] = lbCap
 		}
 
-		base := forwardRPS / len(web)
-		rem := forwardRPS % len(web)
+		caps := make([]int, len(web))
+		targets := make([]int, len(web))
+		for i, srv := range web {
+			capRPS, err := MaxRPS(srv)
+			if err != nil {
+				return nil, err
+			}
+			caps[i] = capRPS
+			capacity[srv.ID] = capRPS
+		}
+		// LB / clients send to web-1 first, then forward leftover to web-2, etc.
+		unplaced := fillForward(targets, caps, forwardRPS)
 
-		nodes := make([]TickNode, 0, len(web)+1)
-		var webTickOK, webTickFail, lbTickFail int64
+		nodes := make([]TickNode, 0, len(web)+2)
+		var webTickOK, webTickFail, lbTickFail, dbTickFail int64
 		var tickLatencySum float64
 		var tickLatencyN int
 
@@ -175,29 +187,15 @@ func Run(servers []models.Server, cfg Config) (*Result, error) {
 			})
 		}
 
+		webTickFail += int64(unplaced)
 		for i, srv := range web {
-			capRPS, err := MaxRPS(srv)
-			if err != nil {
-				return nil, err
-			}
-			capacity[srv.ID] = capRPS
-			target := base
-			if i < rem {
-				target++
-			}
+			capRPS := caps[i]
+			target := targets[i]
 			lastTarget[srv.ID] = target
 
-			offered := int64(target)
-			ok := offered
-			var fail int64
-			if offered > int64(capRPS) {
-				ok = int64(capRPS)
-				fail = offered - int64(capRPS)
-			}
+			ok := int64(target)
 			cumOK[srv.ID] += ok
-			cumFail[srv.ID] += fail
 			webTickOK += ok
-			webTickFail += fail
 
 			lat := latencyWebMS
 			if viaLB {
@@ -211,33 +209,118 @@ func Run(servers []models.Server, cfg Config) (*Result, error) {
 			}
 			lat = round1(lat)
 
-			// Collect latency samples for successes (capped per second).
-			sampleN := int(ok)
-			if sampleN > 80 {
-				sampleN = 80
-			}
-			for j := 0; j < sampleN; j++ {
-				latencySamples = append(latencySamples, lat)
-			}
-			tickLatencySum += lat * float64(ok)
-			tickLatencyN += int(ok)
-
 			nodes = append(nodes, TickNode{
 				ID: srv.ID, Role: string(models.RoleWeb), Capacity: capRPS,
-				TargetRPS: target, Success: ok, Failed: fail,
+				TargetRPS: target, Success: ok, Failed: 0,
 				Healthy: srv.IsHealthy(), LatencyMS: lat,
 			})
-
-			// Health check: sustained overload → unhealthy (LB will skip next ticks).
-			if fail > 0 && target >= capRPS {
-				overloadStreak[srv.ID]++
-			} else {
-				overloadStreak[srv.ID] = 0
-			}
-			if overloadStreak[srv.ID] >= UnhealthyAfterSec {
-				markUnhealthy(fleet, srv.ID)
+		}
+		if unplaced > 0 {
+			// Fleet saturated — attribute leftover fails to the last web that is full.
+			for i := len(nodes) - 1; i >= 0; i-- {
+				if nodes[i].Role != string(models.RoleWeb) {
+					continue
+				}
+				if nodes[i].TargetRPS >= nodes[i].Capacity && nodes[i].Capacity > 0 {
+					nodes[i].Failed = int64(unplaced)
+					cumFail[nodes[i].ID] += int64(unplaced)
+					break
+				}
 			}
 		}
+
+		// Each web sends successful requests to its own paired database.
+		e2eOK := webTickOK
+		dbOffer := map[string]int{}
+		pairedHits := 0
+		for i, srv := range web {
+			okN := targets[i]
+			if okN <= 0 {
+				continue
+			}
+			db := findPairedDB(fleet, srv)
+			if db == nil || !db.IsRoutable() {
+				dbTickFail += int64(okN)
+				continue
+			}
+			dbOffer[db.ID] += okN
+			pairedHits += okN
+		}
+
+		if pairedHits > 0 || len(dbOffer) > 0 {
+			var dbOKTotal int64
+			for _, srv := range fleet {
+				if srv.Role != models.RoleDB {
+					continue
+				}
+				offered := dbOffer[srv.ID]
+				if offered == 0 {
+					continue
+				}
+				capRPS, err := MaxRPS(srv)
+				if err != nil {
+					return nil, err
+				}
+				capacity[srv.ID] = capRPS
+				lastTarget[srv.ID] = offered
+
+				ok := int64(offered)
+				var fail int64
+				if offered > capRPS {
+					ok = int64(capRPS)
+					fail = int64(offered - capRPS)
+				}
+				cumOK[srv.ID] += ok
+				cumFail[srv.ID] += fail
+				dbOKTotal += ok
+				dbTickFail += fail
+
+				lat := latencyDBMS
+				loadRatio := float64(offered) / float64(max(capRPS, 1))
+				if loadRatio > 1 {
+					lat += (loadRatio - 1) * 20
+				} else {
+					lat += loadRatio * 3
+				}
+				nodes = append(nodes, TickNode{
+					ID: srv.ID, Role: string(models.RoleDB), Capacity: capRPS,
+					TargetRPS: offered, Success: ok, Failed: fail,
+					Healthy: srv.IsHealthy(), LatencyMS: round1(lat),
+				})
+
+				if fail > 0 && offered >= capRPS {
+					overloadStreak[srv.ID]++
+				} else {
+					overloadStreak[srv.ID] = 0
+				}
+				if overloadStreak[srv.ID] >= UnhealthyAfterSec {
+					markUnhealthy(fleet, srv.ID)
+				}
+			}
+			// Requests that reached web but had no usable paired DB already counted in dbTickFail.
+			e2eOK = dbOKTotal
+		} else if hasRole(fleet, models.RoleDB) && webTickOK > 0 {
+			dbTickFail = webTickOK
+			e2eOK = 0
+		}
+
+		// Collect latency samples for end-to-end successes.
+		sampleLat := latencyWebMS
+		if viaLB {
+			sampleLat += latencyLBMS
+		}
+		if pairedHits > 0 {
+			sampleLat += latencyDBMS
+		}
+		sampleN := int(e2eOK)
+		if sampleN > 80 {
+			sampleN = 80
+		}
+		for j := 0; j < sampleN; j++ {
+			latencySamples = append(latencySamples, round1(sampleLat))
+		}
+		tickLatencySum += sampleLat * float64(e2eOK)
+		tickLatencyN += int(e2eOK)
 
 		avgTickLat := 0.0
 		if tickLatencyN > 0 {
@@ -246,23 +329,22 @@ func Run(servers []models.Server, cfg Config) (*Result, error) {
 
 		ticks = append(ticks, Tick{
 			Second:    sec,
-			Success:   webTickOK,
-			Failed:    lbTickFail + webTickFail,
+			Success:   e2eOK,
+			Failed:    lbTickFail + webTickFail + dbTickFail,
 			LatencyMS: avgTickLat,
 			Nodes:     nodes,
 		})
 	}
 
 	stats := make([]ServerStat, 0)
-	var totalWebOK, totalWebFail, totalLBFail int64
+	var totalWebOK, totalWebFail, totalLBFail, totalDBFail, totalDBOK int64
 	for _, srv := range fleet {
-		if srv.Role != models.RoleWeb && srv.Role != models.RoleLB {
+		if srv.Role != models.RoleWeb && srv.Role != models.RoleLB && srv.Role != models.RoleDB {
 			continue
 		}
 		okN := cumOK[srv.ID]
 		failN := cumFail[srv.ID]
 		if okN == 0 && failN == 0 && lastTarget[srv.ID] == 0 && capacity[srv.ID] == 0 {
-			// never targeted; still show if web/lb exists
 			if capRPS, err := MaxRPS(srv); err == nil {
 				capacity[srv.ID] = capRPS
 			}
@@ -275,12 +357,21 @@ func Run(servers []models.Server, cfg Config) (*Result, error) {
 			Failed:    failN,
 			Healthy:   srv.IsHealthy(),
 		})
-		if srv.Role == models.RoleLB {
+		switch srv.Role {
+		case models.RoleLB:
 			totalLBFail += failN
-		} else if srv.Role == models.RoleWeb {
+		case models.RoleWeb:
 			totalWebOK += okN
 			totalWebFail += failN
+		case models.RoleDB:
+			totalDBOK += okN
+			totalDBFail += failN
 		}
+	}
+
+	e2eSuccess := totalWebOK
+	if hasRole(fleet, models.RoleDB) {
+		e2eSuccess = totalDBOK
 	}
 
 	totalRequests := int64(cfg.RPS) * int64(nSeconds)
@@ -289,8 +380,8 @@ func Run(servers []models.Server, cfg Config) (*Result, error) {
 		Users:         cfg.Users,
 		TargetRPS:     cfg.RPS,
 		TotalRequests: totalRequests,
-		Success:       totalWebOK,
-		Failed:        totalLBFail + totalWebFail,
+		Success:       e2eSuccess,
+		Failed:        totalLBFail + totalWebFail + totalDBFail,
 		ViaLB:         viaLB,
 		Servers:       stats,
 		Ticks:         ticks,
@@ -357,6 +448,57 @@ func filterRoutable(servers []models.Server, role models.Role) []models.Server {
 		}
 	}
 	return out
+}
+
+// fillForward sends traffic to web-1 first up to capacity, then forwards
+// leftover RPS to web-2, and so on. Returns RPS that could not be placed.
+func fillForward(targets, caps []int, total int) int {
+	remaining := total
+	for i := range targets {
+		take := remaining
+		if take > caps[i] {
+			take = caps[i]
+		}
+		if take < 0 {
+			take = 0
+		}
+		targets[i] = take
+		remaining -= take
+	}
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}
+
+func resetHealth(fleet []models.Server) {
+	for i := range fleet {
+		if fleet[i].Status == models.StatusRunning {
+			fleet[i].Health = models.HealthHealthy
+		}
+	}
+}
+
+// findPairedDB returns the database linked to a web server via db_id.
+func findPairedDB(fleet []models.Server, web models.Server) *models.Server {
+	if web.DBID == "" {
+		return nil
+	}
+	for i := range fleet {
+		if fleet[i].ID == web.DBID && fleet[i].Role == models.RoleDB {
+			return &fleet[i]
+		}
+	}
+	return nil
+}
+
+func hasRole(servers []models.Server, role models.Role) bool {
+	for _, s := range servers {
+		if s.Role == role {
+			return true
+		}
+	}
+	return false
 }
 
 func markUnhealthy(fleet []models.Server, id string) {

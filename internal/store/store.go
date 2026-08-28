@@ -81,12 +81,17 @@ func (s *Store) Read() ([]models.Server, error) {
 
 // Add appends a server to the existing state and persists it.
 func (s *Store) Add(server models.Server) error {
-	servers, err := s.Read()
+	return s.AddMany(server)
+}
+
+// AddMany appends multiple servers in one write.
+func (s *Store) AddMany(servers ...models.Server) error {
+	list, err := s.Read()
 	if err != nil {
 		return err
 	}
-	servers = append(servers, server)
-	return s.Write(servers)
+	list = append(list, servers...)
+	return s.Write(list)
 }
 
 // Get returns a server by id.
@@ -119,22 +124,38 @@ func (s *Store) Update(server models.Server) error {
 }
 
 // Delete removes a server by id.
+// Deleting a web also removes its paired database; deleting a db clears web links.
 func (s *Store) Delete(id string) error {
 	servers, err := s.Read()
 	if err != nil {
 		return err
 	}
+
+	var target *models.Server
+	for i := range servers {
+		if servers[i].ID == id {
+			target = &servers[i]
+			break
+		}
+	}
+	if target == nil {
+		return fmt.Errorf("%w: %s", ErrNotFound, id)
+	}
+
+	removeIDs := map[string]bool{id: true}
+	if target.Role == models.RoleWeb && target.DBID != "" {
+		removeIDs[target.DBID] = true
+	}
+
 	out := make([]models.Server, 0, len(servers))
-	found := false
 	for _, srv := range servers {
-		if srv.ID == id {
-			found = true
+		if removeIDs[srv.ID] {
 			continue
 		}
+		if srv.Role == models.RoleWeb && removeIDs[srv.DBID] {
+			srv.DBID = ""
+		}
 		out = append(out, srv)
-	}
-	if !found {
-		return fmt.Errorf("%w: %s", ErrNotFound, id)
 	}
 	return s.Write(out)
 }

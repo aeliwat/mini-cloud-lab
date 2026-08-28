@@ -265,6 +265,7 @@
             <strong>${srv.id}</strong>
             <span class="mono">${srv.ram} · ${srv.disk}</span>
             <span class="mono cap-line">${srv.status}${srv.capacity_rps ? ` · ${srv.capacity_rps} rps cap` : ""}</span>
+            ${srv.role === "web" && srv.db_id ? `<span class="mono db-link">db → ${srv.db_id}</span>` : ""}
             <div class="meter"><span data-meter="${srv.id}"></span></div>`;
         }
         el.querySelector(".node-remove").addEventListener("click", (e) => {
@@ -382,27 +383,35 @@
     els.wires.setAttribute("viewBox", `0 0 ${s.width} ${s.height}`);
     els.wires.innerHTML = "";
 
-    const lb = servers.filter((srv) => srv.role === "lb" && srv.status === "running" && srv.healthy !== false);
-    const web = servers.filter((srv) => srv.role === "web" && srv.status === "running" && srv.healthy !== false);
-    const db = servers.filter((srv) => srv.role === "db");
+    const lbs = servers.filter((srv) => srv.role === "lb");
+    const allWeb = servers.filter((srv) => srv.role === "web");
+    const primaryLB = lbs.find((srv) => srv.status === "running") || lbs[0];
 
-    if (lb.length > 0) {
-      connect("clients", lb[0].id, "rgba(255,179,71,0.75)", 2.4);
-      for (const srv of web) {
-        connect(lb[0].id, srv.id, "rgba(92,225,255,0.65)", 2);
+    if (primaryLB) {
+      connect("clients", primaryLB.id, "rgba(255,179,71,0.75)", 2.4);
+      // LB connects to every web server (topology), even if unhealthy/stopped.
+      for (const srv of allWeb) {
+        const dim = srv.status !== "running" || srv.healthy === false;
+        connect(
+          primaryLB.id,
+          srv.id,
+          dim ? "rgba(92,225,255,0.28)" : "rgba(92,225,255,0.75)",
+          dim ? 1.4 : 2.2
+        );
       }
     } else {
-      for (const srv of web) {
+      for (const srv of allWeb) {
+        if (srv.status !== "running") continue;
         connect("clients", srv.id, "rgba(57,255,138,0.65)", 2);
       }
     }
 
-    web.forEach((w, wi) => {
-      db.forEach((d, di) => {
-        if (db.length > 1 && wi % db.length !== di) return;
-        connect(w.id, d.id, "rgba(199,146,234,0.5)", 1.6);
-      });
-    });
+    // Each web server connects only to its own paired database.
+    for (const w of allWeb) {
+      if (w.db_id) {
+        connect(w.id, w.db_id, "rgba(199,146,234,0.7)", 1.8);
+      }
+    }
   }
 
   function resizeCanvas() {
@@ -434,7 +443,8 @@
   function applyLoadVisuals() {
     for (const [id, st] of Object.entries(loadState)) {
       const loadPct = Math.min(100, st.loadPct);
-      const overloaded = st.loadPct >= 100 || st.failed > 0;
+      // Color from this tick only — don't keep OVERLOAD stuck after spillover.
+      const overloaded = st.loadPct >= 100 || (st.failedThisTick || 0) > 0;
       const node = document.querySelector(`[data-id="${id}"]`);
       const meter = document.querySelector(`[data-meter="${id}"]`);
       const badge = document.querySelector(`[data-badge="${id}"]`);
@@ -451,7 +461,7 @@
       }
       if (badge) {
         if (overloaded) {
-          badge.textContent = "OVERLOAD";
+          badge.textContent = st.loadPct >= 100 ? "FULL" : "OVERLOAD";
           badge.className = "load-badge badge-red";
         } else {
           badge.textContent = `${Math.round(loadPct)}%`;
@@ -487,6 +497,14 @@
       })
       .filter(Boolean);
 
+    const dbNodes = (tick.nodes || [])
+      .filter((n) => n.role === "db")
+      .map((n) => {
+        const meta = nodeMeta(n.id);
+        return meta ? { ...n, meta } : null;
+      })
+      .filter(Boolean);
+
     const lbFailRate = lbNode && lbNode.success + lbNode.failed
       ? lbNode.failed / (lbNode.success + lbNode.failed)
       : 0;
@@ -496,14 +514,29 @@
     for (let i = 0; i < count; i++) {
       const failAtLB = useLB && Math.random() < lbFailRate;
       let web = null;
+      let db = null;
       let failAtWeb = false;
+      let failAtDB = false;
       if (!failAtLB && webNodes.length) {
-        web = pickWeighted(webNodes, (w) => Math.max(1, w.target_rps));
+        // Prefer web-1 (first / highest target from fill-forward), then others.
+        web = pickWeighted(webNodes, (w) => Math.max(1, w.target_rps * w.target_rps));
         const total = web.success + web.failed;
         failAtWeb = total ? Math.random() < web.failed / total : false;
       }
+      if (!failAtLB && !failAtWeb && web && dbNodes.length) {
+        const pairedId = (servers.find((s) => s.id === web.id) || {}).db_id;
+        db = pairedId
+          ? dbNodes.find((d) => d.id === pairedId) || null
+          : null;
+        if (db) {
+          const total = db.success + db.failed;
+          failAtDB = total ? Math.random() < db.failed / total : false;
+        }
+      }
 
       const segments = [];
+      let webSegIdx = -1;
+      let dbSegIdx = -1;
       if (useLB) {
         const towardLB = { x: lbMeta.cx, y: lbMeta.cy };
         const from = clientAnchorToward(towardLB);
@@ -513,18 +546,30 @@
           const lbOut = nodeAnchorToward(lbNode.id, { x: web.meta.cx, y: web.meta.cy });
           const webIn = nodeAnchorToward(web.id, lbOut);
           segments.push(curvePoints(lbOut, webIn));
+          webSegIdx = segments.length - 1;
         }
       } else if (web) {
         const toward = { x: web.meta.cx, y: web.meta.cy };
         const from = clientAnchorToward(toward);
         const webIn = nodeAnchorToward(web.id, from);
         segments.push(curvePoints(from, webIn));
+        webSegIdx = segments.length - 1;
       } else continue;
+
+      if (!failAtLB && !failAtWeb && web && db) {
+        const webOut = nodeAnchorToward(web.id, { x: db.meta.cx, y: db.meta.cy });
+        const dbIn = nodeAnchorToward(db.id, webOut);
+        segments.push(curvePoints(webOut, dbIn));
+        dbSegIdx = segments.length - 1;
+      }
 
       particles.push({
         segments,
         failAtLB,
         failAtWeb,
+        failAtDB,
+        webSegIdx,
+        dbSegIdx,
         t: Math.random() * 0.2,
         speed: 0.01 + Math.random() * 0.012,
         trail: [],
@@ -576,9 +621,13 @@
           failed = true;
           point.y += (st - 0.9) * 70;
         }
-        if (p.failAtWeb && idx === segs.length - 1 && st > 0.86) {
+        if (p.failAtWeb && idx === p.webSegIdx && st > 0.86) {
           failed = true;
           point.y += (st - 0.86) * 60;
+        }
+        if (p.failAtDB && idx === p.dbSegIdx && st > 0.86) {
+          failed = true;
+          point.y += (st - 0.86) * 55;
         }
         p.trail.push({ x: point.x, y: point.y });
         if (p.trail.length > 7) p.trail.shift();
@@ -626,10 +675,11 @@
         // Update per-node load from this second's target vs capacity.
         for (const n of tick.nodes || []) {
           const loadPct = (n.target_rps / Math.max(n.capacity, 1)) * 100;
-          const prev = loadState[n.id] || { failed: 0 };
+          const prev = loadState[n.id] || {};
           loadState[n.id] = {
             loadPct,
-            failed: prev.failed + n.failed,
+            failedThisTick: n.failed,
+            failed: (prev.failed || 0) + n.failed,
             ok: (prev.ok || 0) + n.success,
             capacity: n.capacity,
             target: n.target_rps,
@@ -709,6 +759,7 @@
       for (const st of data.servers || []) {
         loadState[st.id] = {
           loadPct: (st.target_rps / Math.max(st.capacity, 1)) * 100,
+          failedThisTick: st.failed,
           failed: st.failed,
           ok: st.success,
           capacity: st.capacity,

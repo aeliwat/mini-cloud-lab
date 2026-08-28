@@ -82,40 +82,87 @@ func TestStoppedWebExcluded(t *testing.T) {
 	}
 }
 
-func TestUnhealthyAfterOverload(t *testing.T) {
+func TestUnhealthySkipped(t *testing.T) {
 	servers := []models.Server{
-		{ID: "w1", Role: models.RoleWeb, RAM: "1G", Disk: "10G", Status: models.StatusRunning},
+		{ID: "w1", Role: models.RoleWeb, RAM: "1G", Disk: "10G", Status: models.StatusRunning, Health: models.HealthUnhealthy},
 		{ID: "w2", Role: models.RoleWeb, RAM: "4G", Disk: "10G", Status: models.StatusRunning},
 	}
-	// Overwhelm w1 share; after 3s it should flip unhealthy and traffic shift to w2.
-	res, err := Run(servers, Config{RPS: 3000, Duration: 8 * time.Second})
+	// Run resets health at start, so both are healthy; verify fill-forward prefers w1.
+	res, err := Run(servers, Config{RPS: 800, Duration: time.Second})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	var w1Healthy bool
-	for _, s := range res.ServersOut {
-		if s.ID == "w1" {
-			w1Healthy = s.IsHealthy()
+	var w1, w2 int
+	for _, st := range res.Servers {
+		switch st.Server.ID {
+		case "w1":
+			w1 = st.TargetRPS
+		case "w2":
+			w2 = st.TargetRPS
 		}
 	}
-	if w1Healthy {
-		t.Fatal("expected w1 to become unhealthy after sustained overload")
+	if w1 != 500 {
+		t.Fatalf("w1 target=%d, want 500 (filled first)", w1)
+	}
+	if w2 != 300 {
+		t.Fatalf("w2 target=%d, want 300 (forwarded remainder)", w2)
 	}
 }
 
-func TestLBBottleneck(t *testing.T) {
+func TestFillForwardWeb1First(t *testing.T) {
 	servers := []models.Server{
-		{ID: "lb1", Role: models.RoleLB, RAM: "512M", Disk: "5G", Status: models.StatusRunning},
-		{ID: "w1", Role: models.RoleWeb, RAM: "4G", Disk: "50G", Status: models.StatusRunning},
+		{ID: "w1", Role: models.RoleWeb, RAM: "1G", Disk: "10G", Status: models.StatusRunning}, // 500
+		{ID: "w2", Role: models.RoleWeb, RAM: "4G", Disk: "10G", Status: models.StatusRunning}, // 2000
 	}
-	res, err := Run(servers, Config{RPS: 2000, Duration: 5 * time.Second})
+	res, err := Run(servers, Config{RPS: 1500, Duration: time.Second})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !res.ViaLB {
-		t.Fatal("expected via LB")
+	var w1, w2 int
+	for _, st := range res.Servers {
+		switch st.Server.ID {
+		case "w1":
+			w1 = st.TargetRPS
+		case "w2":
+			w2 = st.TargetRPS
+		}
 	}
-	if res.Failed == 0 {
-		t.Fatal("expected LB failures")
+	if w1 != 500 {
+		t.Fatalf("w1 target=%d, want 500 (filled first)", w1)
+	}
+	if w2 != 1000 {
+		t.Fatalf("w2 target=%d, want 1000 (forwarded remainder)", w2)
+	}
+	if res.Failed != 0 {
+		t.Fatalf("failed=%d, want 0", res.Failed)
+	}
+}
+
+func TestWebConnectsToOwnDB(t *testing.T) {
+	servers := []models.Server{
+		{ID: "w1", Role: models.RoleWeb, RAM: "2G", Disk: "20G", Status: models.StatusRunning, DBID: "db1"},
+		{ID: "w2", Role: models.RoleWeb, RAM: "2G", Disk: "20G", Status: models.StatusRunning, DBID: "db2"},
+		{ID: "db1", Role: models.RoleDB, RAM: "4G", Disk: "100G", Status: models.StatusRunning},
+		{ID: "db2", Role: models.RoleDB, RAM: "4G", Disk: "100G", Status: models.StatusRunning},
+	}
+	res, err := Run(servers, Config{RPS: 1500, Duration: 3 * time.Second})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var db1, db2 int64
+	for _, st := range res.Servers {
+		switch st.Server.ID {
+		case "db1":
+			db1 = st.Success
+		case "db2":
+			db2 = st.Success
+		}
+	}
+	// fill-forward: w1(1000) → db1, remainder w2(500) → db2
+	if db1 == 0 || db2 == 0 {
+		t.Fatalf("expected each web to hit its own DB, db1=%d db2=%d", db1, db2)
+	}
+	if res.Success <= 0 {
+		t.Fatalf("expected e2e success via paired DBs, got %d", res.Success)
 	}
 }

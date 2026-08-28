@@ -69,31 +69,90 @@ minicloud reset --force
 minicloud init
 
 minicloud server add --type lb  --ram 1G --disk 10G
-minicloud server add --type web --ram 1G --disk 20G
-minicloud server add --type web --ram 2G --disk 50G
-minicloud server add --type db  --ram 4G --disk 100G
+minicloud server add --type web --ram 1G --disk 20G   # also creates a paired DB
+minicloud server add --type web --ram 2G --disk 50G   # also creates a paired DB
 
 minicloud status
 ```
 
-**Example output:**
-```text
-State:    .../state.json
-Servers:  4
+Adding a **web** server provisions a dedicated database (`4G` / `100G`) and links them. Traffic path: users → LB → web-1 (then forward) → each web’s own DB.
 
-ID      ROLE  RAM  DISK  STATUS
-lb-…    lb    1G   10G   running
-web-…   web   1G   20G   running
-web-…   web   2G   50G   running
-db-…    db    4G   100G  running
+---
+
+## Virtual users & RPS
+
+**Virtual users** are a label for the report — **RPS** is what actually stresses the system.
+
+| Goal | Users | RPS |
+|------|------:|----:|
+| Light / healthy | 10,000 | 200–500 |
+| Normal load | 50,000–100,000 | 1,000–2,000 |
+| Stress / overload | 200,000–500,000 | 3,000–8,000 |
+
+**Capacity (teaching model)**
+
+| Role | Formula |
+|------|---------|
+| web | `RAM_GB × 500` RPS |
+| lb | `RAM_GB × 2000` RPS |
+| db | `RAM_GB × 1000` RPS |
+
+Tip: start with `users=50000 / rps=1000 / 10s`, then raise RPS until nodes turn red. Or use UI scenarios (Black Friday, AZ failure, Tiny LB).
+
+---
+
+## Sample setups
+
+### A — balanced (good first test)
+
+```bash
+minicloud reset --force && minicloud init
+
+minicloud server add --type lb  --ram 1G --disk 10G
+minicloud server add --type web --ram 2G --disk 40G   # + paired db 4G
+minicloud server add --type web --ram 2G --disk 40G
+
+# Capacities: LB 2000 · web 1000 each · db 4000 each
+minicloud load --users 80000 --rps 1500 --duration 15s
 ```
+
+Expect mostly green; web-1 near full, spillover to web-2.
+
+### B — overload web tier
+
+```bash
+minicloud reset --force && minicloud init
+
+minicloud server add --type lb  --ram 1G --disk 10G
+minicloud server add --type web --ram 1G --disk 20G   # 500 rps each
+minicloud server add --type web --ram 1G --disk 20G
+minicloud server add --type web --ram 1G --disk 20G
+
+minicloud load --users 300000 --rps 4000 --duration 20s
+```
+
+Fleet web cap ≈ 1500 RPS → failures / FULL on webs.
+
+### C — tiny LB bottleneck
+
+```bash
+minicloud reset --force && minicloud init
+
+minicloud server add --type lb  --ram 512M --disk 5G    # ~1000 rps
+minicloud server add --type web --ram 4G   --disk 50G   # 2000 rps each
+minicloud server add --type web --ram 4G   --disk 50G
+
+minicloud load --users 200000 --rps 3000 --duration 15s
+```
+
+LB saturates first; webs stay healthier.
 
 ---
 
 ## Sample: simulate load (CLI)
 
 ```bash
-./minicloud load --rps 2000 --duration 10s --users 100000
+minicloud load --rps 2000 --duration 10s --users 100000
 ```
 
 **Example output:**
@@ -105,12 +164,12 @@ Failed:         …
 Success rate:   …
 ```
 
-
+---
 
 ## Sample: open the UI
 
 ```bash
-./minicloud ui
+minicloud ui
 # open http://localhost:7474
 ```
 
@@ -127,11 +186,11 @@ In the UI you can:
 |---------|-------------|
 | `minicloud init` | Create empty `state.json` |
 | `minicloud reset --force` | Delete `state.json` and start over |
-| `minicloud server add --type web\|db\|lb --ram 2G --disk 50G` | Add a server |
+| `minicloud server add --type web\|db\|lb --ram 2G --disk 50G` | Add a server (`web` also creates a paired DB) |
 | `minicloud server ls` | List servers |
-| `minicloud server stop <id>` | Stop a server (LB skips it) |
+| `minicloud server stop <id>` | Stop a server (LB will skip it) |
 | `minicloud server start <id>` | Start a server and mark healthy |
-| `minicloud server rm <id>` | Delete a server |
+| `minicloud server rm <id>` | Delete a server (web also deletes its paired DB) |
 | `minicloud status` | Show fleet status + health |
 | `minicloud load --rps 1000 --duration 15s [--users N]` | Simulate traffic (CLI) |
 | `minicloud ui [--port 7474]` | Open animated UI |
@@ -142,14 +201,13 @@ In the UI you can:
 
 | `--type` | Meaning | Capacity |
 |----------|---------|----------|
-| `web` | Web / API server | `RAM × 500` RPS |
-| `db` | Database | shown in UI only |
+| `web` | Web / API server (auto-pairs a DB) | `RAM × 500` RPS |
+| `db` | Database | `RAM × 1000` RPS |
 | `lb` | Load balancer | `RAM × 2000` RPS |
 
-**Health & latency**
-- Sustained overload (~3s) marks a web node **unhealthy**; the LB stops routing to it
-- `server start <id>` brings it back healthy
-- Load reports include **avg / p50 / p95** latency (ms)
+**Routing**
+- With an LB: users → LB → **web-1 first**, then forward leftover RPS to web-2, …
+- Each web sends traffic to **its own paired DB**
 
 ---
 

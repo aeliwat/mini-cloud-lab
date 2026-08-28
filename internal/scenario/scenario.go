@@ -29,10 +29,12 @@ func All() []Spec {
 			Duration:    "20s",
 			Servers: []models.Server{
 				{ID: "lb-1", Role: models.RoleLB, RAM: "1G", Disk: "10G", Status: models.StatusRunning},
-				{ID: "web-1", Role: models.RoleWeb, RAM: "1G", Disk: "20G", Status: models.StatusRunning},
-				{ID: "web-2", Role: models.RoleWeb, RAM: "1G", Disk: "20G", Status: models.StatusRunning},
-				{ID: "web-3", Role: models.RoleWeb, RAM: "1G", Disk: "20G", Status: models.StatusRunning},
+				{ID: "web-1", Role: models.RoleWeb, RAM: "1G", Disk: "20G", Status: models.StatusRunning, DBID: "db-1"},
+				{ID: "web-2", Role: models.RoleWeb, RAM: "1G", Disk: "20G", Status: models.StatusRunning, DBID: "db-2"},
+				{ID: "web-3", Role: models.RoleWeb, RAM: "1G", Disk: "20G", Status: models.StatusRunning, DBID: "db-3"},
 				{ID: "db-1", Role: models.RoleDB, RAM: "4G", Disk: "100G", Status: models.StatusRunning},
+				{ID: "db-2", Role: models.RoleDB, RAM: "4G", Disk: "100G", Status: models.StatusRunning},
+				{ID: "db-3", Role: models.RoleDB, RAM: "4G", Disk: "100G", Status: models.StatusRunning},
 			},
 		},
 		{
@@ -44,9 +46,10 @@ func All() []Spec {
 			Duration:    "15s",
 			Servers: []models.Server{
 				{ID: "lb-1", Role: models.RoleLB, RAM: "2G", Disk: "10G", Status: models.StatusRunning},
-				{ID: "web-a", Role: models.RoleWeb, RAM: "2G", Disk: "40G", Status: models.StatusRunning},
-				{ID: "web-b", Role: models.RoleWeb, RAM: "2G", Disk: "40G", Status: models.StatusStopped},
-				{ID: "db-1", Role: models.RoleDB, RAM: "4G", Disk: "100G", Status: models.StatusRunning},
+				{ID: "web-a", Role: models.RoleWeb, RAM: "2G", Disk: "40G", Status: models.StatusRunning, DBID: "db-a"},
+				{ID: "web-b", Role: models.RoleWeb, RAM: "2G", Disk: "40G", Status: models.StatusStopped, DBID: "db-b"},
+				{ID: "db-a", Role: models.RoleDB, RAM: "4G", Disk: "100G", Status: models.StatusRunning},
+				{ID: "db-b", Role: models.RoleDB, RAM: "4G", Disk: "100G", Status: models.StatusRunning},
 			},
 		},
 		{
@@ -58,9 +61,10 @@ func All() []Spec {
 			Duration:    "15s",
 			Servers: []models.Server{
 				{ID: "lb-1", Role: models.RoleLB, RAM: "512M", Disk: "5G", Status: models.StatusRunning},
-				{ID: "web-1", Role: models.RoleWeb, RAM: "4G", Disk: "50G", Status: models.StatusRunning},
-				{ID: "web-2", Role: models.RoleWeb, RAM: "4G", Disk: "50G", Status: models.StatusRunning},
+				{ID: "web-1", Role: models.RoleWeb, RAM: "4G", Disk: "50G", Status: models.StatusRunning, DBID: "db-1"},
+				{ID: "web-2", Role: models.RoleWeb, RAM: "4G", Disk: "50G", Status: models.StatusRunning, DBID: "db-2"},
 				{ID: "db-1", Role: models.RoleDB, RAM: "8G", Disk: "200G", Status: models.StatusRunning},
+				{ID: "db-2", Role: models.RoleDB, RAM: "8G", Disk: "200G", Status: models.StatusRunning},
 			},
 		},
 	}

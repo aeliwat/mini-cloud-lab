@@ -17,10 +17,17 @@ var (
 	serverDisk string
 )
 
+const (
+	defaultPairedDBRAM  = "4G"
+	defaultPairedDBDisk = "100G"
+)
+
 var serverAddCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Add a simulated server to local state",
 	Long: `Add a server with the given role and resource sizes.
+
+Adding a web server also provisions a dedicated database and links them.
 
 Examples:
   minicloud server add --type web --ram 2G --disk 50G
@@ -67,6 +74,28 @@ func runServerAdd(cmd *cobra.Command, args []string) error {
 		Disk:   serverDisk,
 		Status: models.StatusRunning,
 		Health: models.HealthHealthy,
+	}
+
+	if role == models.RoleWeb {
+		dbID, err := newServerID()
+		if err != nil {
+			return fmt.Errorf("generate db id: %w", err)
+		}
+		db := models.Server{
+			ID:     dbID,
+			Role:   models.RoleDB,
+			RAM:    defaultPairedDBRAM,
+			Disk:   defaultPairedDBDisk,
+			Status: models.StatusRunning,
+			Health: models.HealthHealthy,
+		}
+		srv.DBID = db.ID
+		if err := s.AddMany(srv, db); err != nil {
+			return err
+		}
+		fmt.Printf("Added server %s (%s, ram=%s, disk=%s)\n", srv.ID, srv.Role, srv.RAM, srv.Disk)
+		fmt.Printf("Paired database %s (%s, ram=%s, disk=%s)\n", db.ID, db.Role, db.RAM, db.Disk)
+		return nil
 	}
 
 	if err := s.Add(srv); err != nil {

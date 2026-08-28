@@ -29,11 +29,12 @@ const (
 // Server represents a virtual machine in the local cloud simulation.
 type Server struct {
 	ID     string `json:"id"`
-	Role   Role   `json:"role"`             // web, db, or lb
-	RAM    string `json:"ram"`              // human-readable, e.g. "2G"
-	Disk   string `json:"disk"`             // human-readable, e.g. "50G"
-	Status Status `json:"status"`           // running or stopped
-	Health Health `json:"health,omitempty"` // healthy (default) or unhealthy
+	Role   Role   `json:"role"`               // web, db, or lb
+	RAM    string `json:"ram"`                // human-readable, e.g. "2G"
+	Disk   string `json:"disk"`               // human-readable, e.g. "50G"
+	Status Status `json:"status"`             // running or stopped
+	Health Health `json:"health,omitempty"`   // healthy (default) or unhealthy
+	DBID   string `json:"db_id,omitempty"`    // web → dedicated database id
 }
 
 // IsRoutable reports whether the LB/clients may send traffic to this node.

@@ -213,7 +213,7 @@ func enrich(servers []models.Server) []nodeDTO {
 	out := make([]nodeDTO, 0, len(servers))
 	for _, srv := range servers {
 		n := nodeDTO{Server: srv, Healthy: srv.IsHealthy()}
-		if srv.Role == models.RoleWeb || srv.Role == models.RoleLB {
+		if srv.Role == models.RoleWeb || srv.Role == models.RoleLB || srv.Role == models.RoleDB {
 			if capRPS, err := sim.MaxRPS(srv); err == nil {
 				n.CapacityRPS = capRPS
 			}

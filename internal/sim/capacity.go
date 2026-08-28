@@ -14,6 +14,8 @@ const (
 	RPSPerGB = 500
 	// RPSPerGBLB is capacity for load balancers (higher throughput per GB).
 	RPSPerGBLB = 2000
+	// RPSPerGBDB is query capacity for databases.
+	RPSPerGBDB = 1000
 )
 
 // ParseRAMGB converts values like "2G", "2g", "512M" into gigabytes (float).
@@ -47,8 +49,11 @@ func MaxRPS(srv models.Server) (int, error) {
 		return 0, fmt.Errorf("server %s: %w", srv.ID, err)
 	}
 	perGB := RPSPerGB
-	if srv.Role == models.RoleLB {
+	switch srv.Role {
+	case models.RoleLB:
 		perGB = RPSPerGBLB
+	case models.RoleDB:
+		perGB = RPSPerGBDB
 	}
 	return int(gb * float64(perGB)), nil
 }

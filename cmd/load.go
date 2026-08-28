@@ -23,12 +23,13 @@ var loadCmd = &cobra.Command{
 	Short: "Simulate traffic against the provisioned architecture",
 	Long: `Simulate request load across your cloud.
 
-Path without LB:  users → web servers (even split)
-Path with LB:     users → load balancer → web servers
+Path without LB:  users → web servers → databases
+Path with LB:     users → load balancer → web servers → databases
 
 Capacity (teaching model):
   web = RAM_GB × 500 RPS
   lb  = RAM_GB × 2000 RPS
+  db  = RAM_GB × 1000 RPS
 
 Examples:
   minicloud load --rps 1000 --duration 30s
@@ -111,6 +112,6 @@ func printLoadReport(r *sim.Result) {
 	_ = w.Flush()
 
 	fmt.Println()
-	fmt.Println("Hint: web capacity = RAM_GB×500 RPS; lb capacity = RAM_GB×2000 RPS.")
+	fmt.Println("Hint: web = RAM_GB×500 RPS; lb = RAM_GB×2000 RPS; db = RAM_GB×1000 RPS.")
 	fmt.Println("Health: nodes stay unhealthy after sustained overload until 'minicloud server start <id>'.")
 }

@@ -28,14 +28,18 @@ var serverLSCmd = &cobra.Command{
 			return nil
 		}
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "ID\tROLE\tRAM\tDISK\tSTATUS\tHEALTH")
+		fmt.Fprintln(w, "ID\tROLE\tRAM\tDISK\tSTATUS\tHEALTH\tDB")
 		for _, srv := range servers {
 			health := models.HealthHealthy
 			if !srv.IsHealthy() {
 				health = models.HealthUnhealthy
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-				srv.ID, srv.Role, srv.RAM, srv.Disk, srv.Status, health)
+			db := "-"
+			if srv.DBID != "" {
+				db = srv.DBID
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				srv.ID, srv.Role, srv.RAM, srv.Disk, srv.Status, health, db)
 		}
 		return w.Flush()
 	},
@@ -51,10 +55,15 @@ var serverRmCmd = &cobra.Command{
 			return err
 		}
 		id := args[0]
+		before, _ := s.Get(id)
 		if err := s.Delete(id); err != nil {
 			return err
 		}
-		fmt.Printf("Deleted server %s\n", id)
+		if before.Role == models.RoleWeb && before.DBID != "" {
+			fmt.Printf("Deleted server %s (and paired database %s)\n", id, before.DBID)
+		} else {
+			fmt.Printf("Deleted server %s\n", id)
+		}
 		return nil
 	},
 }
